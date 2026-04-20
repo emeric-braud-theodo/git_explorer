@@ -1,10 +1,9 @@
+mod cli;
 mod git_reader;
-use git_reader::git_reader::GitReader;
+use cli::cli::CLI;
 
-fn main() {
-    let git_reader = GitReader::new().expect("Cannot read repository");
-    match git_reader.get_head() {
-        Ok(head) => println!("{}", head),
-        Err(e) => println!("Error: {}", e),
-    }
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = CLI::new()?;
+    cli.listen();
+    Ok(())
 }
