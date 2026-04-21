@@ -15,6 +15,7 @@ tokio = { version = "1", features = ["full"] }
 colored = "3.0"
 rustyline = "14.0.0"
 walkdir = "2.5.0"
+futures = "0.3.32"
 
 [dev-dependencies]
 tempfile = "3.10"
