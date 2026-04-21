@@ -139,6 +139,24 @@ impl Server {
         Ok(())
     }
 
+    pub async fn get_references(
+        &mut self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<serde_json::Value, std::io::Error> {
+        let abs_path = std::fs::canonicalize(file_path)?;
+        let uri = format!("file://{}", abs_path.display());
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+            "context": { "includeDeclaration": true }
+        });
+
+        self.request("textDocument/references", params).await
+    }
+
     // --- PLOMBERIE ---
 
     async fn send_notification(
@@ -191,20 +209,46 @@ impl Server {
                         .unwrap_or(0);
                     let _ = reader.read_line(&mut String::new()).await;
                     let mut body = vec![0u8; len];
+
                     if reader.read_exact(&mut body).await.is_ok() {
                         let json: serde_json::Value =
                             serde_json::from_slice(&body).unwrap_or_default();
 
-                        // ROUTAGE : Est-ce une réponse à une requête ?
+                        // --- C'EST ICI QU'IL FAUT MODIFIER ---
+
                         if let Some(id) = json.get("id").and_then(|i| i.as_u64()) {
+                            // C'est une réponse à une requête (ex: symbols)
+                            // On ne print rien ici ! On envoie au channel
                             let mut pending = pending_requests.lock().await;
                             if let Some(tx) = pending.remove(&id) {
-                                let _ = tx.send(json); // Réveille la fonction en attente
+                                let _ = tx.send(json);
                             }
                         } else {
-                            // C'est une notification (logs, diagnostics...)
-                            // println!("[LSP Notification] {}", json["method"]);
+                            // C'est une NOTIFICATION (le bruit qui casse ton prompt)
+                            // On "nettoie" la ligne avant d'afficher
+
+                            use colored::*; // Assure-toi que c'est dispo ici
+
+                            print!("\r\x1b[2K"); // Efface le prompt actuel
+
+                            // On peut filtrer pour n'afficher que les trucs utiles
+                            let method = json["method"].as_str().unwrap_or("");
+                            if method == "window/showMessage" {
+                                println!(
+                                    "{} {}",
+                                    "[LSP Alert]".yellow(),
+                                    json["params"]["message"]
+                                );
+                            } else {
+                                // Si tu veux quand même tout voir sans casser le prompt :
+                                // println!("\n[LSP Notif]: {}", method);
+                            }
+
+                            // On réaffiche le prompt neurogit>
+                            print!("{}", "neurogit> ".green().bold());
+                            let _ = std::io::Write::flush(&mut std::io::stdout());
                         }
+                        // ---------------------------------------
                     }
                 }
             }
