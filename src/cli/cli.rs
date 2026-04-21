@@ -14,6 +14,7 @@ enum Command {
     LspStop,
     LspSymbols(String),
     LspReferences(String, u32, u32),
+    LspCalls(String, u32, u32),
     Unknown(String),
 }
 
@@ -33,6 +34,11 @@ impl Command {
                 let l = line.parse::<u32>().unwrap_or(1).saturating_sub(1);
                 let c = col.parse::<u32>().unwrap_or(1).saturating_sub(1);
                 Self::LspReferences(path.to_string(), l, c)
+            }
+            ["lsp", "calls", path, line, col] | ["calls", path, line, col] => {
+                let l = line.parse::<u32>().unwrap_or(1).saturating_sub(1);
+                let c = col.parse::<u32>().unwrap_or(1).saturating_sub(1);
+                Self::LspCalls(path.to_string(), l, c)
             }
 
             ["lsp", "symbols", path] | ["symbols", path] => Self::LspSymbols(path.to_string()),
@@ -105,6 +111,9 @@ impl CLI {
 
             Command::LspReferences(path, line, col) => {
                 self.handle_lsp_references(&path, line, col).await
+            }
+            Command::LspCalls(path, line, col) => {
+                self.handle_lsp_calls(&path, line, col).await;
             }
 
             Command::Unknown(s) => println!("{} {}", "Unknown command:".red(), s),
@@ -272,6 +281,41 @@ impl CLI {
                 }
             }
             Err(e) => self.print_error("LSP References", e),
+        }
+    }
+
+    async fn handle_lsp_calls(&mut self, path: &str, line: u32, col: u32) {
+        let Some(client) = &mut self.lsp_client else {
+            return;
+        };
+
+        match client.get_outgoing_calls(path, line, col).await {
+            Ok(response) => {
+                if let Some(calls) = response.get("result").and_then(|r| r.as_array()) {
+                    println!(
+                        "\n{} calls found inside this symbol:",
+                        calls.len().to_string().green()
+                    );
+                    for call in calls {
+                        // Dans outgoingCalls, la cible est dans "to"
+                        let to = &call["to"];
+                        let name = to["name"].as_str().unwrap_or("?");
+                        let uri = to["uri"].as_str().unwrap_or("");
+                        let line = to["range"]["start"]["line"].as_u64().unwrap_or(0);
+
+                        if !uri.contains(".rustup") {
+                            println!(
+                                " {} {} ({}:{})",
+                                "→".cyan(),
+                                name.bold(),
+                                uri.split('/').last().unwrap_or(""),
+                                line + 1
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => self.print_error("LSP Calls", e),
         }
     }
 

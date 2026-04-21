@@ -31,8 +31,8 @@ impl LspClient {
             "capabilities": {
                 "textDocument": {
                     "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
-                    // On active proprement le support des références
-                    "references": { "dynamicRegistration": true }
+                    "references": { "dynamicRegistration": true },
+                    "callHierarchy": { "dynamicRegistration": true }
                 },
                 // Optionnel mais recommandé pour éviter des timeouts serveurs
                 "workspace": { "configuration": true }
@@ -122,5 +122,41 @@ impl LspClient {
 
     pub async fn stop(self) -> Result<(), std::io::Error> {
         self.transport.shutdown().await
+    }
+
+    pub async fn get_outgoing_calls(
+        &mut self,
+        file_path: &str,
+        line: u32,
+        col: u32,
+    ) -> Result<Value, std::io::Error> {
+        let uri = self.path_to_uri(file_path)?;
+
+        // ÉTAPE 1 : Préparer la hiérarchie pour obtenir l'objet "item"
+        let prepare_res = self
+            .request(
+                "textDocument/prepareCallHierarchy",
+                json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": col }
+                }),
+            )
+            .await?;
+
+        // On extrait le premier item (souvent un seul)
+        let Some(items) = prepare_res.get("result").and_then(|r| r.as_array()) else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "No hierarchy item found",
+            ));
+        };
+
+        if items.is_empty() {
+            return Ok(json!([]));
+        }
+
+        // ÉTAPE 2 : Demander les appels sortants pour cet item
+        self.request("callHierarchy/outgoingCalls", json!({ "item": items[0] }))
+            .await
     }
 }
