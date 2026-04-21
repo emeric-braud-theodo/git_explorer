@@ -5,6 +5,14 @@ edition = "2024"
 
 [dependencies]
 git2 = "0.20"
+# Les types officiels du protocole (Ligne, Position, Symboles, etc.)
+lsp-types = "0.95"
+# Pour la sérialisation des messages JSON-RPC
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Pour gérer les entrées/sorties de manière asynchrone (recommandé)
+tokio = { version = "1", features = ["full"] }
+colored = "3.0"
 
 [dev-dependencies]
 tempfile = "3.10"
