@@ -1,15 +1,126 @@
+use super::transport::LspTransport;
+use serde_json::{Value, json};
+use std::fs; // Utilisation de la crate lsp-types
+
 pub struct LspClient {
     transport: LspTransport,
-    capabilities: ServerCapabilities,
+    request_id: u64,
+    root_path: String,
 }
 
 impl LspClient {
-    pub async fn get_symbols(&mut self, path: &str) -> Result<Vec<Symbol>> {
-        self.transport.send_notification("textDocument/didOpen", ...).await?;
-        
-        // La méthode request retourne maintenant un objet typé, pas du JSON brut
-        let response: SymbolResponse = self.transport.request("textDocument/documentSymbol", ...).await?;
-        
-        Ok(response.result)
+    pub async fn new(server_name: &str, root_path: &str) -> Result<Self, std::io::Error> {
+        let transport = LspTransport::start(server_name).await?;
+        let mut client = Self {
+            transport,
+            request_id: 1,
+            root_path: root_path.to_string(),
+        };
+
+        client.initialize().await?;
+        Ok(client)
+    }
+
+    async fn initialize(&mut self) -> Result<(), std::io::Error> {
+        let abs_path = std::fs::canonicalize(&self.root_path)?;
+        let uri = format!("file://{}", abs_path.display());
+
+        let params = json!({
+            "processId": std::process::id(),
+            "rootUri": uri,
+            "capabilities": {
+                "textDocument": {
+                    "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
+                    // On active proprement le support des références
+                    "references": { "dynamicRegistration": true }
+                },
+                // Optionnel mais recommandé pour éviter des timeouts serveurs
+                "workspace": { "configuration": true }
+            }
+        });
+
+        self.request("initialize", params).await?;
+        self.transport
+            .send_notification("initialized", json!({}))
+            .await
+    }
+
+    pub async fn get_symbols(&mut self, file_path: &str) -> Result<Value, std::io::Error> {
+        let uri = self.path_to_uri(file_path)?;
+        let content = fs::read_to_string(file_path)?;
+
+        // Notification d'ouverture
+        self.transport
+            .send_notification(
+                "textDocument/didOpen",
+                json!({
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "rust",
+                        "version": 1,
+                        "text": content
+                    }
+                }),
+            )
+            .await?;
+
+        self.request(
+            "textDocument/documentSymbol",
+            json!({
+                "textDocument": { "uri": uri }
+            }),
+        )
+        .await
+    }
+
+    pub async fn get_references(
+        &mut self,
+        file_path: &str,
+        line: u32,
+        col: u32,
+    ) -> Result<Value, std::io::Error> {
+        let uri = self.path_to_uri(file_path)?;
+        let content = fs::read_to_string(file_path)?; // Ajouté
+
+        // 1. Signaler au serveur que le fichier est ouvert/mis à jour
+        self.transport
+            .send_notification(
+                "textDocument/didOpen",
+                json!({
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "rust",
+                        "version": 1,
+                        "text": content
+                    }
+                }),
+            )
+            .await?;
+
+        // 2. Maintenant la requête a une chance de réussir
+        self.request(
+            "textDocument/references",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": col },
+                "context": { "includeDeclaration": true }
+            }),
+        )
+        .await
+    }
+
+    async fn request(&mut self, method: &str, params: Value) -> Result<Value, std::io::Error> {
+        let id = self.request_id;
+        self.request_id += 1;
+        self.transport.send_request(id, method, params).await
+    }
+
+    fn path_to_uri(&self, path: &str) -> Result<String, std::io::Error> {
+        let abs = fs::canonicalize(path)?;
+        Ok(format!("file://{}", abs.display()))
+    }
+
+    pub async fn stop(self) -> Result<(), std::io::Error> {
+        self.transport.shutdown().await
     }
 }
