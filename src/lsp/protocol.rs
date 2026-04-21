@@ -1,32 +1,18 @@
-use lsp_types::{DocumentSymbolResponse, Location};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-/// Structure de base d'un message JSON-RPC (Réponse)
-#[derive(Debug, Deserialize)]
-pub struct LspResponse<T> {
-    pub jsonrpc: String,
-    pub id: Option<u64>,
-    pub result: Option<T>,
-    pub error: Option<LspError>,
-}
-
-/// Structure pour les erreurs retournées par le serveur
-#[derive(Debug, Deserialize)]
-pub struct LspError {
-    pub code: i64,
-    pub message: String,
-}
-
-/// On peut définir des alias pour rendre le code du Client plus lisible
-pub type SymbolResponse = LspResponse<DocumentSymbolResponse>;
-pub type ReferencesResponse = LspResponse<Vec<Location>>;
-
-/// Si tu veux simplifier l'affichage des symboles, tu peux créer ta propre struct
-/// "aplatie" pour éviter de naviguer dans l'objet DocumentSymbol complexe.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SimpleSymbol {
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct Node {
+    pub id: String, // "file:line:col"
     pub name: String,
-    pub kind: String,
+    pub file: String,
     pub line: u32,
     pub col: u32,
+    pub kind: String,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ProjectGraph {
+    pub nodes: HashMap<String, Node>,
+    pub edges: Vec<(String, String)>, // (SourceID, TargetID)
 }

@@ -1,4 +1,5 @@
 use crate::git_reader::git_reader::GitReader;
+use crate::lsp::LspExplorer;
 use crate::lsp::client::LspClient;
 use colored::*;
 use rustyline::DefaultEditor;
@@ -16,6 +17,8 @@ enum Command {
     LspSymbols(String),
     LspReferences(String, u32, u32),
     LspCalls(String, u32, u32),
+    LspGraphBuild,
+    LspGraphView,
     Unknown(String),
 }
 
@@ -41,6 +44,8 @@ impl Command {
                 let c = col.parse::<u32>().unwrap_or(1).saturating_sub(1);
                 Self::LspCalls(path.to_string(), l, c)
             }
+            ["lsp", "graph", "build"] => Self::LspGraphBuild,
+            ["lsp", "graph", "view"] | ["lsp", "graph", "export"] => Self::LspGraphView,
 
             ["lsp", "symbols", path] | ["symbols", path] => Self::LspSymbols(path.to_string()),
             _ => Self::Unknown(args.join(" ")),
@@ -155,6 +160,73 @@ impl CLI {
             }
             Command::LspCalls(path, line, col) => {
                 self.handle_lsp_calls(&path, line, col).await;
+            }
+
+            Command::LspGraphBuild => {
+                let Some(client) = &mut self.lsp_client else {
+                    println!("{}", "Error: LSP not started.".red());
+                    return;
+                };
+
+                println!(
+                    "{}",
+                    "🚀 Building project graph... this may take a while.".cyan()
+                );
+                let mut explorer = LspExplorer::new(client);
+
+                match explorer.build_full_graph().await {
+                    Ok(graph) => {
+                        let node_count = graph.nodes.len();
+                        let edge_count = graph.edges.len();
+                        explorer.save_to_disk(&graph).expect("Failed to save graph");
+                        println!(
+                            "{}",
+                            format!(
+                                "✅ Graph built: {} nodes, {} edges.",
+                                node_count, edge_count
+                            )
+                            .green()
+                        );
+                        println!("{}", "Stored in .neurogit/graph.json".dimmed());
+                    }
+                    Err(e) => println!("{} {}", "Failed to build graph:".red(), e),
+                }
+            }
+
+            Command::LspGraphView => {
+                let Some(client) = &mut self.lsp_client else {
+                    println!("{}", "Error: LSP not started.".red());
+                    return;
+                };
+
+                println!("{}", "🎨 Exporting graph to DOT format...".cyan());
+
+                // On charge le graphe depuis le fichier JSON généré par le build
+                let graph_path = ".neurogit/graph.json";
+                if !std::path::Path::new(graph_path).exists() {
+                    println!(
+                        "{}",
+                        "Error: No graph found. Run 'lsp graph build' first.".red()
+                    );
+                    return;
+                }
+
+                match std::fs::read_to_string(graph_path) {
+                    Ok(data) => {
+                        let graph: crate::lsp::protocol::ProjectGraph =
+                            serde_json::from_str(&data).expect("Failed to parse graph.json");
+                        let explorer = LspExplorer::new(client);
+
+                        match explorer.export_to_dot(&graph) {
+                            Ok(_) => {
+                                println!("{}", "✅ Graph exported to .neurogit/graph.dot".green());
+                                println!("{}", "💡 Tip: Use 'dot -Tpng .neurogit/graph.dot -o graph.png' to visualize it.".dimmed());
+                            }
+                            Err(e) => self.print_error("Graph Export", e),
+                        }
+                    }
+                    Err(e) => self.print_error("Read Graph File", e),
+                }
             }
 
             Command::Unknown(s) => println!("{} {}", "Unknown command:".red(), s),

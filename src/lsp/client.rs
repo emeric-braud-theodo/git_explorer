@@ -159,4 +159,36 @@ impl LspClient {
         self.request("callHierarchy/outgoingCalls", json!({ "item": items[0] }))
             .await
     }
+
+    pub async fn get_incoming_calls(
+        &mut self,
+        file_path: &str,
+        line: u32,
+        col: u32,
+    ) -> Result<Value, std::io::Error> {
+        let uri = self.path_to_uri(file_path)?;
+
+        // 1. Prepare
+        let prepare_res = self
+            .request(
+                "textDocument/prepareCallHierarchy",
+                json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": col }
+                }),
+            )
+            .await?;
+
+        let Some(items) = prepare_res.get("result").and_then(|r| r.as_array()) else {
+            return Ok(json!([]));
+        };
+
+        if items.is_empty() {
+            return Ok(json!([]));
+        }
+
+        // 2. Incoming
+        self.request("callHierarchy/incomingCalls", json!({ "item": items[0] }))
+            .await
+    }
 }
