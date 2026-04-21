@@ -1,8 +1,9 @@
 use crate::git_reader::git_reader::GitReader;
 use crate::lsp::client::LspClient;
 use colored::*;
+use rustyline::DefaultEditor;
+use rustyline::error::ReadlineError;
 use serde_json::Value;
-use std::io::{self, Write};
 
 /// Représente les intentions de l'utilisateur
 enum Command {
@@ -50,38 +51,78 @@ impl Command {
 pub struct CLI {
     git_reader: GitReader,
     lsp_client: Option<LspClient>,
+    editor: DefaultEditor,
 }
 
 impl CLI {
-    pub fn new() -> Result<Self, git2::Error> {
+    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        // 1. Définir le chemin du dossier
+        let config_dir = ".neurogit";
+        let history_path = format!("{}/history.txt", config_dir);
+
+        // 2. Créer le répertoire (ne fait rien s'il existe déjà)
+        std::fs::create_dir_all(config_dir)?;
+
+        let mut editor = DefaultEditor::new()?;
+
+        // 3. Charger l'historique
+        let _ = editor.load_history(&history_path);
+
         Ok(Self {
             git_reader: GitReader::new()?,
             lsp_client: None,
+            editor,
         })
     }
 
     /// Boucle principale de lecture
     pub async fn listen(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         loop {
-            let input = self.prompt()?;
-            let args: Vec<&str> = input.split_whitespace().collect();
+            // Remplacement du prompt manuel par rustyline
+            let readline = self
+                .editor
+                .readline(&"neurogit> ".green().bold().to_string());
 
-            if args.is_empty() {
-                continue;
-            }
+            match readline {
+                Ok(line) => {
+                    let input = line.trim();
+                    if input.is_empty() {
+                        continue;
+                    }
 
-            let cmd = Command::parse(args);
+                    // Ajoute la commande à l'historique (pour les flèches haut/bas)
+                    let _ = self.editor.add_history_entry(input);
 
-            // Gestion de la sortie et nettoyage du client LSP
-            if let Command::Exit = cmd {
-                if let Some(client) = self.lsp_client.take() {
-                    let _ = client.stop().await;
+                    let args: Vec<&str> = input.split_whitespace().collect();
+                    let cmd = Command::parse(args);
+
+                    if let Command::Exit = cmd {
+                        if let Some(client) = self.lsp_client.take() {
+                            let _ = client.stop().await;
+                        }
+                        // Utilise le même chemin relatif
+                        let _ = self.editor.save_history(".neurogit/history.txt");
+                        println!("{}", "Goodbye!".yellow());
+                        break;
+                    }
+
+                    self.dispatch(cmd).await;
                 }
-                println!("{}", "Goodbye!".yellow());
-                break;
+                Err(ReadlineError::Interrupted) => {
+                    // Gère le Ctrl-C
+                    println!("CTRL-C");
+                    break;
+                }
+                Err(ReadlineError::Eof) => {
+                    // Gère le Ctrl-D
+                    println!("CTRL-D");
+                    break;
+                }
+                Err(err) => {
+                    println!("Error: {:?}", err);
+                    break;
+                }
             }
-
-            self.dispatch(cmd).await;
         }
         Ok(())
     }
@@ -320,14 +361,6 @@ impl CLI {
     }
 
     // --- HELPERS ---
-
-    fn prompt(&self) -> io::Result<String> {
-        print!("{}", "neurogit> ".green().bold());
-        io::stdout().flush()?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        Ok(input.trim().to_string())
-    }
 
     fn print_error<E: std::fmt::Display>(&self, context: &str, err: E) {
         eprintln!("{} {}: {}", "Error".red().bold(), context, err);
