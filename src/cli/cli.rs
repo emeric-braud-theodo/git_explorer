@@ -19,6 +19,7 @@ enum Command {
     LspCalls(String, u32, u32),
     LspGraphBuild,
     LspGraphView,
+    LspGraphExportCypher,
     Unknown(String),
 }
 
@@ -47,6 +48,7 @@ impl Command {
             ["lsp", "graph", "build"] => Self::LspGraphBuild,
             ["lsp", "graph", "view"] | ["lsp", "graph", "export"] => Self::LspGraphView,
 
+            ["lsp", "graph", "export", "cypher"] => Self::LspGraphExportCypher,
             ["lsp", "symbols", path] | ["symbols", path] => Self::LspSymbols(path.to_string()),
             _ => Self::Unknown(args.join(" ")),
         }
@@ -223,6 +225,45 @@ impl CLI {
                                 println!("{}", "💡 Tip: Use 'dot -Tpng .neurogit/graph.dot -o graph.png' to visualize it.".dimmed());
                             }
                             Err(e) => self.print_error("Graph Export", e),
+                        }
+                    }
+                    Err(e) => self.print_error("Read Graph File", e),
+                }
+            }
+            Command::LspGraphExportCypher => {
+                let Some(client) = &mut self.lsp_client else {
+                    println!("{}", "Error: LSP not started.".red());
+                    return;
+                };
+
+                let graph_path = ".neurogit/graph.json";
+                if !std::path::Path::new(graph_path).exists() {
+                    println!(
+                        "{}",
+                        "Error: No graph found. Run 'lsp graph build' first.".red()
+                    );
+                    return;
+                }
+
+                match std::fs::read_to_string(graph_path) {
+                    Ok(data) => {
+                        let graph: crate::lsp::protocol::ProjectGraph =
+                            serde_json::from_str(&data).expect("Failed to parse graph.json");
+                        let explorer = LspExplorer::new(client);
+
+                        let cypher_script = explorer.export_to_cypher(&graph);
+
+                        let path = ".neurogit/project_graph.cypher";
+                        match std::fs::write(path, cypher_script) {
+                            Ok(_) => {
+                                println!("{}", "✅ Cypher script generated!".green());
+                                println!("{} {}", "File stored at:".dimmed(), path.cyan());
+                                println!(
+                                    "{}",
+                                    "💡 Copy the content of this file into Neo4j AuraDB.".yellow()
+                                );
+                            }
+                            Err(e) => println!("Error saving file: {}", e),
                         }
                     }
                     Err(e) => self.print_error("Read Graph File", e),

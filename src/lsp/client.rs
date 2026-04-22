@@ -124,6 +124,23 @@ impl LspClient {
         self.transport.shutdown().await
     }
 
+    pub async fn get_definition(
+        &mut self,
+        file_path: &str,
+        line: u32,
+        col: u32,
+    ) -> Result<Value, std::io::Error> {
+        let uri = self.path_to_uri(file_path)?;
+        self.request(
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": col }
+            }),
+        )
+        .await
+    }
+
     pub async fn get_outgoing_calls(
         &mut self,
         file_path: &str,
